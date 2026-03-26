@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Chess Match-3</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #1a1a2e;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: 100vh;
+    font-family: 'Segoe UI', Arial, sans-serif;
+    padding: 10px;
+    color: #fff;
+    user-select: none;
+  }
+
+  h1 {
+    font-size: clamp(1.2rem, 5vw, 1.8rem);
+    margin-bottom: 6px;
+    letter-spacing: 2px;
+    color: #ffd700;
+    text-shadow: 0 0 10px rgba(255,215,0,0.5);
+  }
+
+  #score-area {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 8px;
+    font-size: clamp(0.85rem, 3.5vw, 1rem);
+  }
+
+  #score-area span {
+    background: rgba(255,255,255,0.1);
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid rgba(255,255,255,0.2);
+  }
+
+  #score-area strong { color: #ffd700; }
+
+  #board-container {
+    position: relative;
+    touch-action: none;
+  }
+
+  #board {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    border: 3px solid #8b6914;
+    border-radius: 4px;
+    box-shadow: 0 0 30px rgba(0,0,0,0.6);
+  }
+
+  .cell {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .cell.light { background: #f0d9b5; }
+  .cell.dark  { background: #b58863; }
+
+  .cell.selected { background: #7fc97f !important; box-shadow: inset 0 0 0 3px #2a7a2a; }
+  .cell.valid-move { background: rgba(80,200,80,0.55) !important; }
+  .cell.valid-move::after {
+    content: '';
+    width: 35%;
+    height: 35%;
+    border-radius: 50%;
+    background: rgba(50,180,50,0.7);
+  }
+
+  .piece {
+    width: 88%;
+    height: 88%;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.4em;
+    font-weight: bold;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.4), inset 0 1px 3px rgba(255,255,255,0.4);
+    transition: transform 0.12s, opacity 0.3s;
+    position: relative;
+    z-index: 1;
+  }
+
+  .piece.matched {
+    animation: pop 0.35s ease-out forwards;
+  }
+
+  .piece.dropping {
+    animation: drop 0.25s ease-out;
+  }
+
+  @keyframes pop {
+    0%   { transform: scale(1);   opacity: 1; }
+    50%  { transform: scale(1.4); opacity: 0.8; }
+    100% { transform: scale(0);   opacity: 0; }
+  }
+
+  @keyframes drop {
+    from { transform: translateY(-60px); opacity: 0; }
+    to   { transform: translateY(0);     opacity: 1; }
+  }
+
+  #message {
+    margin-top: 8px;
+    min-height: 28px;
+    font-size: clamp(0.85rem, 3.5vw, 1rem);
+    color: #7fffff;
+    text-align: center;
+    padding: 0 10px;
+    font-style: italic;
+  }
+
+  #legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 10px;
+    max-width: 400px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: rgba(255,255,255,0.07);
+    border-radius: 12px;
+    padding: 3px 8px;
+    font-size: clamp(0.65rem, 2.8vw, 0.78rem);
+  }
+
+  .legend-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>♟ Chess Match-3</h1>
+<div id="score-area">
+  <span>Score: <strong id="score">0</strong></span>
+  <span>Moves: <strong id="moves">0</strong></span>
+</div>
+
+<div id="board-container">
+  <div id="board"></div>
+</div>
+
+<div id="message">Select a piece to see its valid moves.</div>
+
+<div id="legend"></div>
+
+<script>
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+const capitalize = str => str.charAt(0).toUpperCase() + str.slice(1);
+
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+const PIECE_TYPES = ['pawn', 'king', 'knight', 'bishop', 'rook', 'queen'];
+const PIECE_COLORS = {
+  pawn:   '#e74c3c',
+  king:   '#f1c40f',
+  knight: '#3498db',
+  bishop: '#2ecc71',
+  rook:   '#9b59b6',
+  queen:  '#e67e22'
+};
+const PIECE_SYMBOLS = {
+  pawn:   '♟',
+  king:   '♚',
+  knight: '♞',
+  bishop: '♝',
+  rook:   '♜',
+  queen:  '♛'
+};
+const GRID = 8;
+
+// ─── STATE ────────────────────────────────────────────────────────────────────
+let board = [];       // board[row][col] = piece type string
+let selected = null;  // {row, col}
+let validMoves = [];  // [{row, col}]
+let score = 0;
+let moveCount = 0;
+let busy = false;     // prevent interaction during animations
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+function init() {
+  board = [];
+  for (let r = 0; r < GRID; r++) {
+    board[r] = [];
+    for (let c = 0; c < GRID; c++) {
+      board[r][c] = randomPiece();
+    }
+  }
+  // Keep re-randomising until no initial matches exist (max 100 attempts)
+  let attempts = 0;
+  while (findMatches().length > 0 && attempts < 100) {
+    for (let r = 0; r < GRID; r++)
+      for (let c = 0; c < GRID; c++)
+        board[r][c] = randomPiece();
+    attempts++;
+  }
+  score = 0;
+  moveCount = 0;
+  selected = null;
+  validMoves = [];
+  renderBoard();
+  updateStats();
+  buildLegend();
+}
+
+function randomPiece() {
+  return PIECE_TYPES[Math.floor(Math.random() * PIECE_TYPES.length)];
+}
+
+// ─── RENDERING ────────────────────────────────────────────────────────────────
+function renderBoard(matchedCells) {
+  const boardEl = document.getElementById('board');
+  const size = Math.min(window.innerWidth - 20, window.innerHeight * 0.62, 420);
+  const cellSize = Math.floor(size / GRID);
+  boardEl.style.width  = cellSize * GRID + 'px';
+  boardEl.style.height = cellSize * GRID + 'px';
+
+  boardEl.innerHTML = '';
+  for (let r = 0; r < GRID; r++) {
+    for (let c = 0; c < GRID; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'cell ' + ((r + c) % 2 === 0 ? 'light' : 'dark');
+      cell.style.width  = cellSize + 'px';
+      cell.style.height = cellSize + 'px';
+      cell.dataset.row = r;
+      cell.dataset.col = c;
+
+      const isSelected = selected && selected.row === r && selected.col === c;
+      const isValid = validMoves.some(m => m.row === r && m.col === c);
+
+      if (isSelected) cell.classList.add('selected');
+      if (isValid)    cell.classList.add('valid-move');
+
+      if (board[r][c]) {
+        const piece = document.createElement('div');
+        piece.className = 'piece';
+        piece.style.background = PIECE_COLORS[board[r][c]];
+        piece.style.fontSize = Math.max(12, cellSize * 0.44) + 'px';
+        piece.textContent = PIECE_SYMBOLS[board[r][c]];
+        cell.appendChild(piece);
+      }
+
+      cell.addEventListener('click', () => handleClick(r, c));
+      cell.addEventListener('touchstart', (e) => { handleClick(r, c); }, { passive: true });
+
+      boardEl.appendChild(cell);
+    }
+  }
+}
+
+function updateStats() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('moves').textContent = moveCount;
+}
+
+function setMessage(msg) {
+  document.getElementById('message').textContent = msg;
+}
+
+function buildLegend() {
+  const leg = document.getElementById('legend');
+  leg.innerHTML = '';
+  PIECE_TYPES.forEach(type => {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    const dot = document.createElement('div');
+    dot.className = 'legend-dot';
+    dot.style.background = PIECE_COLORS[type];
+    const label = document.createElement('span');
+    label.textContent = capitalize(type);
+    item.appendChild(dot);
+    item.appendChild(label);
+    leg.appendChild(item);
+  });
+}
+
+// ─── MOVEMENT RULES ──────────────────────────────────────────────────────────
+function getValidMoves(row, col) {
+  const type = board[row][col];
+  const moves = [];
+
+  const inBounds = (r, c) => r >= 0 && r < GRID && c >= 0 && c < GRID;
+  const addSlide = (dr, dc) => {
+    let r = row + dr, c = col + dc;
+    while (inBounds(r, c)) { moves.push({ row: r, col: c }); r += dr; c += dc; }
+  };
+
+  switch (type) {
+    case 'pawn':
+      // Move one square orthogonally (left, right, up, down)
+      [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc]) => {
+        const r = row + dr, c = col + dc;
+        if (inBounds(r, c)) moves.push({ row: r, col: c });
+      });
+      break;
+
+    case 'king':
+      // One square in any of 8 directions
+      for (let dr = -1; dr <= 1; dr++)
+        for (let dc = -1; dc <= 1; dc++)
+          if ((dr !== 0 || dc !== 0) && inBounds(row + dr, col + dc))
+            moves.push({ row: row + dr, col: col + dc });
+      break;
+
+    case 'knight':
+      // L-shape: (±1, ±2) and (±2, ±1)
+      [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]].forEach(([dr,dc]) => {
+        const r = row + dr, c = col + dc;
+        if (inBounds(r, c)) moves.push({ row: r, col: c });
+      });
+      break;
+
+    case 'bishop':
+      // Diagonal slides
+      [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([dr,dc]) => addSlide(dr, dc));
+      break;
+
+    case 'rook':
+      // Orthogonal slides
+      [[-1,0],[1,0],[0,-1],[0,1]].forEach(([dr,dc]) => addSlide(dr, dc));
+      break;
+
+    case 'queen':
+      // All 8 directions
+      for (let dr = -1; dr <= 1; dr++)
+        for (let dc = -1; dc <= 1; dc++)
+          if (dr !== 0 || dc !== 0) addSlide(dr, dc);
+      break;
+  }
+  return moves;
+}
+
+// ─── INTERACTION ─────────────────────────────────────────────────────────────
+function handleClick(row, col) {
+  if (busy) return;
+
+  if (!selected) {
+    // Select a piece
+    selected = { row, col };
+    validMoves = getValidMoves(row, col);
+    const type = board[row][col];
+    setMessage(`${capitalize(type)} selected — ${validMoves.length} valid move(s).`);
+    renderBoard();
+    return;
+  }
+
+  // Clicked the same cell → deselect
+  if (selected.row === row && selected.col === col) {
+    selected = null;
+    validMoves = [];
+    setMessage('Select a piece to see its valid moves.');
+    renderBoard();
+    return;
+  }
+
+  // Clicked a valid destination
+  if (validMoves.some(m => m.row === row && m.col === col)) {
+    swapPieces(selected.row, selected.col, row, col);
+    return;
+  }
+
+  // Clicked another piece (re-select)
+  selected = { row, col };
+  validMoves = getValidMoves(row, col);
+  const type = board[row][col];
+  setMessage(`${capitalize(type)} selected — ${validMoves.length} valid move(s).`);
+  renderBoard();
+}
+
+// ─── GAME LOGIC ───────────────────────────────────────────────────────────────
+function swapPieces(r1, c1, r2, c2) {
+  busy = true;
+  const tmp = board[r1][c1];
+  board[r1][c1] = board[r2][c2];
+  board[r2][c2] = tmp;
+
+  selected = null;
+  validMoves = [];
+  moveCount++;
+  updateStats();
+  renderBoard();
+
+  // Process matches after swap
+  setTimeout(() => processMatches(), 50);
+}
+
+function findMatches() {
+  const matched = new Set();
+
+  // Horizontal
+  for (let r = 0; r < GRID; r++) {
+    let c = 0;
+    while (c < GRID) {
+      const type = board[r][c];
+      let len = 1;
+      while (c + len < GRID && board[r][c + len] === type) len++;
+      if (len >= 3) {
+        for (let i = 0; i < len; i++) matched.add(`${r},${c + i}`);
+      }
+      c += len;
+    }
+  }
+
+  // Vertical
+  for (let c = 0; c < GRID; c++) {
+    let r = 0;
+    while (r < GRID) {
+      const type = board[r][c];
+      let len = 1;
+      while (r + len < GRID && board[r + len][c] === type) len++;
+      if (len >= 3) {
+        for (let i = 0; i < len; i++) matched.add(`${r + i},${c}`);
+      }
+      r += len;
+    }
+  }
+
+  return [...matched].map(key => {
+    const [row, col] = key.split(',').map(Number);
+    return { row, col };
+  });
+}
+
+function processMatches() {
+  const matches = findMatches();
+  if (matches.length === 0) {
+    busy = false;
+    setMessage('Select a piece to see its valid moves.');
+    return;
+  }
+
+  // Score
+  score += matches.length * 10;
+  updateStats();
+  setMessage(`${matches.length} pieces matched! +${matches.length * 10} points`);
+
+  // Animate matched pieces
+  matches.forEach(({ row, col }) => {
+    const cellEl = getCellEl(row, col);
+    const pieceEl = cellEl && cellEl.querySelector('.piece');
+    if (pieceEl) pieceEl.classList.add('matched');
+  });
+
+  setTimeout(() => {
+    // Clear matched cells
+    matches.forEach(({ row, col }) => {
+      board[row][col] = null;
+    });
+
+    // Drop pieces down column by column
+    for (let c = 0; c < GRID; c++) {
+      let writeRow = GRID - 1;
+      for (let r = GRID - 1; r >= 0; r--) {
+        if (board[r][c] !== null) {
+          board[writeRow][c] = board[r][c];
+          if (writeRow !== r) board[r][c] = null;
+          writeRow--;
+        }
+      }
+      // Fill empty top cells with new random pieces
+      for (let r = writeRow; r >= 0; r--) {
+        board[r][c] = randomPiece();
+      }
+    }
+
+    renderBoard();
+    // Animate newly dropped pieces
+    document.querySelectorAll('.piece').forEach(el => {
+      el.classList.add('dropping');
+      setTimeout(() => el.classList.remove('dropping'), 300);
+    });
+
+    // Check for chain matches
+    setTimeout(() => processMatches(), 350);
+  }, 380);
+}
+
+function getCellEl(row, col) {
+  return document.querySelector(`[data-row="${row}"][data-col="${col}"]`);
+}
+
+// ─── RESIZE ───────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => renderBoard());
+
+// ─── BOOT ─────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
