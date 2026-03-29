@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Chess Match 3</title>
+  <style>
+    *, *::before, *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+
+    body {
+      background: #1a1a2e;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100dvh;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      color: #fff;
+      overflow-x: hidden;
+    }
+
+    #header {
+      width: 100%;
+      padding: 10px 16px 6px;
+      text-align: center;
+    }
+
+    #title {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: #ffd700;
+      text-shadow: 0 0 10px rgba(255,215,0,0.5);
+    }
+
+    #score-row {
+      display: flex;
+      justify-content: center;
+      gap: 24px;
+      margin-top: 4px;
+      font-size: 15px;
+      color: #ccc;
+    }
+
+    #score-row span {
+      color: #ffd700;
+      font-weight: bold;
+    }
+
+    #message {
+      min-height: 28px;
+      font-size: 14px;
+      color: #90caf9;
+      text-align: center;
+      padding: 4px 12px;
+    }
+
+    #grid-wrap {
+      width: 100vw;
+    }
+
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      width: 100%;
+    }
+
+    .cell {
+      aspect-ratio: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+      transition: filter 0.1s;
+    }
+
+    /* Chess square colours */
+    .cell.light { background: #f0d9b5; }
+    .cell.dark  { background: #b58863; }
+
+    /* Selected piece */
+    .cell.selected { background: #6bcf6b !important; }
+
+    /* Valid move hint */
+    .cell.valid-move { background: #5dade2 !important; }
+    .cell.valid-move.dark  { background: #2e86c1 !important; }
+    .cell.valid-move.light { background: #85c1e9 !important; }
+
+    /* Dot indicator on valid-move cells that have a piece */
+    .cell.valid-move::before {
+      content: '';
+      position: absolute;
+      width: 28%;
+      height: 28%;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.55);
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .piece {
+      font-size: calc(100vw / 6 * 0.72);
+      line-height: 1;
+      position: relative;
+      z-index: 1;
+      /* Drop shadow for contrast on both light and dark squares */
+      filter: drop-shadow(1px 2px 2px rgba(0,0,0,0.55));
+      transition: transform 0.15s;
+    }
+
+    .cell.selected .piece {
+      transform: scale(1.15);
+    }
+
+    /* Match removal animation */
+    @keyframes matchPop {
+      0%   { transform: scale(1);    opacity: 1; }
+      40%  { transform: scale(1.45); opacity: 0.7; }
+      100% { transform: scale(0);    opacity: 0; }
+    }
+
+    /* New piece drop-in animation */
+    @keyframes dropIn {
+      0%   { transform: translateY(-60%) scale(0.4); opacity: 0; }
+      70%  { transform: translateY(8%)   scale(1.1); opacity: 1; }
+      100% { transform: translateY(0)    scale(1);   opacity: 1; }
+    }
+
+    .piece.popping { animation: matchPop 0.32s ease-out forwards; }
+    .piece.dropping { animation: dropIn  0.35s ease-out forwards; }
+
+    /* Legend */
+    #legend {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px 14px;
+      padding: 10px 12px 14px;
+      font-size: 12px;
+      color: #ccc;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .legend-icon {
+      font-size: 18px;
+      line-height: 1;
+    }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <div id="title">♟ Chess Match 3 ♟</div>
+  <div id="score-row">
+    Score: <span id="score-val">0</span>
+    &nbsp;|&nbsp;
+    Moves: <span id="moves-val">0</span>
+  </div>
+</div>
+
+<div id="message">Tap a piece to select it</div>
+
+<div id="grid-wrap">
+  <div id="grid"></div>
+</div>
+
+<div id="legend"></div>
+
+<script>
+  /* ─────────────────────────────────────────────────────
+     Constants & configuration
+  ───────────────────────────────────────────────────── */
+  const ROWS = 6, COLS = 6;
+
+  const TYPES = ['pawn', 'king', 'knight', 'bishop', 'rook', 'queen'];
+
+  const SYMBOL = {
+    pawn:   '♟',
+    king:   '♚',
+    knight: '♞',
+    bishop: '♝',
+    rook:   '♜',
+    queen:  '♛',
+  };
+
+  // Bright, distinct colours applied directly to the piece glyphs
+  const COLOR = {
+    pawn:   '#ff4757',   // vivid red
+    king:   '#ffd700',   // gold
+    knight: '#2ecc71',   // emerald green
+    bishop: '#c678ff',   // violet
+    rook:   '#00cec9',   // teal / cyan
+    queen:  '#ff9f43',   // vivid orange
+  };
+
+  const LABEL = {
+    pawn:   'Pawn – 4 cardinal dirs',
+    king:   'King – 8 adj squares',
+    knight: 'Knight – L-shape',
+    bishop: 'Bishop – diagonals',
+    rook:   'Rook – straight lines',
+    queen:  'Queen – all dirs',
+  };
+
+  /* ─────────────────────────────────────────────────────
+     State
+  ───────────────────────────────────────────────────── */
+  let board = [];          // board[r][c] = piece type string
+  let selected = null;     // { r, c } or null
+  let validMoves = [];     // [[r,c], ...]
+  let score = 0;
+  let moves = 0;
+  let busy = false;        // prevent clicks during animation
+
+  /* ─────────────────────────────────────────────────────
+     Board initialisation
+  ───────────────────────────────────────────────────── */
+  function initBoard() {
+    do {
+      board = Array.from({ length: ROWS }, () =>
+        Array.from({ length: COLS }, randomType)
+      );
+    } while (findMatches().length > 0);
+  }
+
+  function randomType() {
+    return TYPES[Math.floor(Math.random() * TYPES.length)];
+  }
+
+  /* ─────────────────────────────────────────────────────
+     Rendering
+  ───────────────────────────────────────────────────── */
+  function buildGrid() {
+    const grid = document.getElementById('grid');
+    grid.innerHTML = '';
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell ' + ((r + c) % 2 === 0 ? 'light' : 'dark');
+        cell.dataset.r = r;
+        cell.dataset.c = c;
+        cell.appendChild(makePieceEl(board[r][c]));
+        cell.addEventListener('click', onCellClick);
+        grid.appendChild(cell);
+      }
+    }
+    buildLegend();
+  }
+
+  function makePieceEl(type) {
+    const span = document.createElement('span');
+    span.className = 'piece';
+    span.textContent = SYMBOL[type];
+    span.style.color = COLOR[type];
+    return span;
+  }
+
+  function cellEl(r, c) {
+    return document.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+  }
+
+  function updateCell(r, c) {
+    const el = cellEl(r, c);
+    // Replace piece child
+    const old = el.querySelector('.piece');
+    if (old) old.remove();
+    el.appendChild(makePieceEl(board[r][c]));
+  }
+
+  function buildLegend() {
+    const leg = document.getElementById('legend');
+    leg.innerHTML = '';
+    TYPES.forEach(t => {
+      const div = document.createElement('div');
+      div.className = 'legend-item';
+      div.innerHTML =
+        `<span class="legend-icon" style="color:${COLOR[t]};filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.5))">${SYMBOL[t]}</span>` +
+        `<span>${LABEL[t]}</span>`;
+      leg.appendChild(div);
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────
+     Movement rules
+  ───────────────────────────────────────────────────── */
+  function getValidMoves(r, c) {
+    const type = board[r][c];
+    const result = [];
+
+    const add = (nr, nc) => {
+      if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) result.push([nr, nc]);
+    };
+
+    const slide = (dr, dc) => {
+      let nr = r + dr, nc = c + dc;
+      while (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+        result.push([nr, nc]);
+        // Sliding pieces are blocked by the first piece they encounter
+        // (they can move TO that square but no further)
+        if (board[nr][nc]) break;
+        nr += dr; nc += dc;
+      }
+    };
+
+    if (type === 'pawn') {
+      // One step in 4 cardinal directions
+      [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dr,dc]) => add(r+dr, c+dc));
+
+    } else if (type === 'king') {
+      // One step in all 8 directions
+      for (let dr = -1; dr <= 1; dr++)
+        for (let dc = -1; dc <= 1; dc++)
+          if (dr || dc) add(r+dr, c+dc);
+
+    } else if (type === 'knight') {
+      // Classic L-shape
+      [[2,1],[2,-1],[-2,1],[-2,-1],[1,2],[1,-2],[-1,2],[-1,-2]]
+        .forEach(([dr,dc]) => add(r+dr, c+dc));
+
+    } else if (type === 'bishop') {
+      // Diagonal sliding
+      [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(([dr,dc]) => slide(dr,dc));
+
+    } else if (type === 'rook') {
+      // Cardinal sliding
+      [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dr,dc]) => slide(dr,dc));
+
+    } else if (type === 'queen') {
+      // All 8 directions sliding
+      for (let dr = -1; dr <= 1; dr++)
+        for (let dc = -1; dc <= 1; dc++)
+          if (dr || dc) slide(dr,dc);
+    }
+
+    return result;
+  }
+
+  /* ─────────────────────────────────────────────────────
+     Highlight helpers
+  ───────────────────────────────────────────────────── */
+  function applyHighlights() {
+    clearHighlights();
+    if (!selected) return;
+    cellEl(selected.r, selected.c).classList.add('selected');
+    validMoves.forEach(([r,c]) => cellEl(r,c).classList.add('valid-move'));
+  }
+
+  function clearHighlights() {
+    document.querySelectorAll('.cell.selected, .cell.valid-move').forEach(el => {
+      el.classList.remove('selected', 'valid-move');
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────
+     Match detection
+  ───────────────────────────────────────────────────── */
+  function findMatches() {
+    const matched = new Set();
+
+    // Horizontal
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c <= COLS - 3; c++) {
+        const t = board[r][c];
+        if (t && t === board[r][c+1] && t === board[r][c+2]) {
+          let end = c + 2;
+          while (end + 1 < COLS && board[r][end+1] === t) end++;
+          for (let k = c; k <= end; k++) matched.add(`${r},${k}`);
+        }
+      }
+    }
+
+    // Vertical
+    for (let c = 0; c < COLS; c++) {
+      for (let r = 0; r <= ROWS - 3; r++) {
+        const t = board[r][c];
+        if (t && t === board[r+1][c] && t === board[r+2][c]) {
+          let end = r + 2;
+          while (end + 1 < ROWS && board[end+1][c] === t) end++;
+          for (let k = r; k <= end; k++) matched.add(`${k},${c}`);
+        }
+      }
+    }
+
+    return [...matched].map(s => s.split(',').map(Number));
+  }
+
+  /* ─────────────────────────────────────────────────────
+     Match resolution with animation
+  ───────────────────────────────────────────────────── */
+  function sleep(ms) {
+    return new Promise(res => setTimeout(res, ms));
+  }
+
+  async function resolveMatches() {
+    let matches = findMatches();
+    while (matches.length > 0) {
+      score += matches.length * 10;
+      document.getElementById('score-val').textContent = score;
+
+      // Animate matched pieces out
+      matches.forEach(([r,c]) => {
+        const p = cellEl(r,c).querySelector('.piece');
+        if (p) p.classList.add('popping');
+      });
+
+      await sleep(340);
+
+      // Replace with new random pieces
+      matches.forEach(([r,c]) => {
+        board[r][c] = randomType();
+        updateCell(r,c);
+        // Animate new pieces in
+        const p = cellEl(r,c).querySelector('.piece');
+        if (p) p.classList.add('dropping');
+      });
+
+      await sleep(380);
+
+      // Clean up animation classes
+      matches.forEach(([r,c]) => {
+        const p = cellEl(r,c).querySelector('.piece');
+        if (p) p.classList.remove('dropping');
+      });
+
+      matches = findMatches();
+    }
+  }
+
+  /* ─────────────────────────────────────────────────────
+     Input handling
+  ───────────────────────────────────────────────────── */
+  async function onCellClick(e) {
+    if (busy) return;
+    const el = e.currentTarget;
+    const r = +el.dataset.r;
+    const c = +el.dataset.c;
+
+    if (!selected) {
+      // — First tap: select piece
+      selected = { r, c };
+      validMoves = getValidMoves(r, c);
+      applyHighlights();
+      setMsg(`${capFirst(board[r][c])} selected — tap a highlighted square to move`);
+      return;
+    }
+
+    // — Already selected
+    if (selected.r === r && selected.c === c) {
+      // Tap same cell → deselect
+      selected = null;
+      validMoves = [];
+      clearHighlights();
+      setMsg('Tap a piece to select it');
+      return;
+    }
+
+    const isValid = validMoves.some(([vr,vc]) => vr === r && vc === c);
+
+    if (isValid) {
+      // Execute the move
+      busy = true;
+      clearHighlights();
+
+      const sr = selected.r, sc = selected.c;
+      selected = null;
+      validMoves = [];
+
+      // Swap the two pieces
+      const tmp = board[sr][sc];
+      board[sr][sc] = board[r][c];
+      board[r][c] = tmp;
+
+      updateCell(sr, sc);
+      updateCell(r, c);
+
+      moves++;
+      document.getElementById('moves-val').textContent = moves;
+      setMsg('Checking for matches…');
+
+      await resolveMatches();
+
+      setMsg('Tap a piece to select it');
+      busy = false;
+
+    } else {
+      // Tap a different piece → select it instead
+      selected = { r, c };
+      validMoves = getValidMoves(r, c);
+      applyHighlights();
+      setMsg(`${capFirst(board[r][c])} selected — tap a highlighted square to move`);
+    }
+  }
+
+  function setMsg(text) {
+    document.getElementById('message').textContent = text;
+  }
+
+  function capFirst(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+
+  /* ─────────────────────────────────────────────────────
+     Bootstrap
+  ───────────────────────────────────────────────────── */
+  initBoard();
+  buildGrid();
+</script>
+</body>
+</html>
