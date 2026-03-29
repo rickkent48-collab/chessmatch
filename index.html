@@ -88,22 +88,9 @@
     /* Selected piece */
     .cell.selected { background: #6bcf6b !important; }
 
-    /* Valid move hint */
-    .cell.valid-move { background: #5dade2 !important; }
-    .cell.valid-move.dark  { background: #2e86c1 !important; }
-    .cell.valid-move.light { background: #85c1e9 !important; }
-
-    /* Dot indicator on valid-move cells that have a piece */
-    .cell.valid-move::before {
-      content: '';
-      position: absolute;
-      width: 28%;
-      height: 28%;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.55);
-      pointer-events: none;
-      z-index: 2;
-    }
+    /* Inactivity indicators */
+    .cell.inactive-warn { background: #ffd700 !important; }
+    .cell.inactive-lock { background: #ff4757 !important; }
 
     .piece {
       font-size: calc(100vw / 6 * 0.72);
@@ -218,6 +205,7 @@
      State
   ───────────────────────────────────────────────────── */
   let board = [];          // board[r][c] = piece type string
+  let idleTurns = [];      // idleTurns[r][c] = turns since piece last moved
   let selected = null;     // { r, c } or null
   let validMoves = [];     // [[r,c], ...]
   let score = 0;
@@ -233,6 +221,7 @@
         Array.from({ length: COLS }, randomType)
       );
     } while (findMatches().length > 0);
+    idleTurns = Array.from({ length: ROWS }, () => new Array(COLS).fill(0));
   }
 
   function randomType() {
@@ -307,9 +296,6 @@
       let nr = r + dr, nc = c + dc;
       while (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
         result.push([nr, nc]);
-        // Sliding pieces are blocked by the first piece they encounter
-        // (they can move TO that square but no further)
-        if (board[nr][nc]) break;
         nr += dr; nc += dc;
       }
     };
@@ -354,13 +340,27 @@
     clearHighlights();
     if (!selected) return;
     cellEl(selected.r, selected.c).classList.add('selected');
-    validMoves.forEach(([r,c]) => cellEl(r,c).classList.add('valid-move'));
+    // Valid moves are not shown per design
   }
 
   function clearHighlights() {
-    document.querySelectorAll('.cell.selected, .cell.valid-move').forEach(el => {
-      el.classList.remove('selected', 'valid-move');
+    document.querySelectorAll('.cell.selected').forEach(el => {
+      el.classList.remove('selected');
     });
+  }
+
+  function updateInactivityVisuals() {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const el = cellEl(r, c);
+        el.classList.remove('inactive-warn', 'inactive-lock');
+        if (idleTurns[r][c] >= 6) {
+          el.classList.add('inactive-lock');
+        } else if (idleTurns[r][c] >= 3) {
+          el.classList.add('inactive-warn');
+        }
+      }
+    }
   }
 
   /* ─────────────────────────────────────────────────────
@@ -420,6 +420,7 @@
       // Replace with new random pieces
       matches.forEach(([r,c]) => {
         board[r][c] = randomType();
+        idleTurns[r][c] = 0;
         updateCell(r,c);
         // Animate new pieces in
         const p = cellEl(r,c).querySelector('.piece');
@@ -434,6 +435,7 @@
         if (p) p.classList.remove('dropping');
       });
 
+      updateInactivityVisuals();
       matches = findMatches();
     }
   }
@@ -449,10 +451,14 @@
 
     if (!selected) {
       // — First tap: select piece
+      if (idleTurns[r][c] >= 6) {
+        setMsg('This piece is frozen — match it to remove it');
+        return;
+      }
       selected = { r, c };
       validMoves = getValidMoves(r, c);
       applyHighlights();
-      setMsg(`${capFirst(board[r][c])} selected — tap a highlighted square to move`);
+      setMsg(`${capFirst(board[r][c])} selected — tap a square to move`);
       return;
     }
 
@@ -482,8 +488,20 @@
       board[sr][sc] = board[r][c];
       board[r][c] = tmp;
 
+      // Both swapped positions reset; all others age by 1 turn
+      for (let i = 0; i < ROWS; i++) {
+        for (let j = 0; j < COLS; j++) {
+          if ((i === sr && j === sc) || (i === r && j === c)) {
+            idleTurns[i][j] = 0;
+          } else {
+            idleTurns[i][j]++;
+          }
+        }
+      }
+
       updateCell(sr, sc);
       updateCell(r, c);
+      updateInactivityVisuals();
 
       moves++;
       document.getElementById('moves-val').textContent = moves;
@@ -493,13 +511,19 @@
 
       setMsg('Tap a piece to select it');
       busy = false;
-
     } else {
-      // Tap a different piece → select it instead
+      // Tap a different piece → select it instead (unless it's frozen)
+      if (idleTurns[r][c] >= 6) {
+        selected = null;
+        validMoves = [];
+        clearHighlights();
+        setMsg('This piece is frozen — match it to remove it');
+        return;
+      }
       selected = { r, c };
       validMoves = getValidMoves(r, c);
       applyHighlights();
-      setMsg(`${capFirst(board[r][c])} selected — tap a highlighted square to move`);
+      setMsg(`${capFirst(board[r][c])} selected — tap a square to move`);
     }
   }
 
