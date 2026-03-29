@@ -85,28 +85,9 @@
     .cell.light { background: #f0d9b5; }
     .cell.dark  { background: #b58863; }
 
-    /* Selected piece */
-    .cell.selected { background: #6bcf6b !important; }
-
-    /* Valid move hint */
-    .cell.valid-move { background: #5dade2 !important; }
-    .cell.valid-move.dark  { background: #2e86c1 !important; }
-    .cell.valid-move.light { background: #85c1e9 !important; }
-
-    /* Dot indicator on valid-move cells that have a piece */
-    .cell.valid-move::before {
-      content: '';
-      position: absolute;
-      width: 28%;
-      height: 28%;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.55);
-      pointer-events: none;
-      z-index: 2;
-    }
-
     .piece {
       font-size: calc(100vw / 6 * 0.72);
+      font-weight: bold;
       line-height: 1;
       position: relative;
       z-index: 1;
@@ -195,29 +176,28 @@
     queen:  '♛',
   };
 
-  // Bright, distinct colours applied directly to the piece glyphs
-  const COLOR = {
-    pawn:   '#ff4757',   // vivid red
-    king:   '#ffd700',   // gold
-    knight: '#2ecc71',   // emerald green
-    bishop: '#c678ff',   // violet
-    rook:   '#00cec9',   // teal / cyan
-    queen:  '#ff9f43',   // vivid orange
+  // Colors based on piece inactivity state
+  const PIECE_COLORS = {
+    green:  '#00cc44',  // active (0–2 turns idle)
+    yellow: '#ffcc00',  // warning (3–5 turns idle)
+    red:    '#ff3300',  // stuck (6+ turns idle — cannot be moved)
+    blue:   '#2196f3',  // selected
   };
 
   const LABEL = {
     pawn:   'Pawn – 4 cardinal dirs',
     king:   'King – 8 adj squares',
     knight: 'Knight – L-shape',
-    bishop: 'Bishop – diagonals',
-    rook:   'Rook – straight lines',
-    queen:  'Queen – all dirs',
+    bishop: 'Bishop – full diagonals',
+    rook:   'Rook – full straight lines',
+    queen:  'Queen – full all dirs',
   };
 
   /* ─────────────────────────────────────────────────────
      State
   ───────────────────────────────────────────────────── */
   let board = [];          // board[r][c] = piece type string
+  let inactivity = [];     // inactivity[r][c] = turns without moving
   let selected = null;     // { r, c } or null
   let validMoves = [];     // [[r,c], ...]
   let score = 0;
@@ -235,8 +215,26 @@
     } while (findMatches().length > 0);
   }
 
+  function initInactivity() {
+    inactivity = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+  }
+
   function randomType() {
     return TYPES[Math.floor(Math.random() * TYPES.length)];
+  }
+
+  /* ─────────────────────────────────────────────────────
+     Inactivity helpers
+  ───────────────────────────────────────────────────── */
+  function getPieceColor(r, c) {
+    const inact = inactivity[r][c];
+    if (inact >= 6) return PIECE_COLORS.red;
+    if (inact >= 3) return PIECE_COLORS.yellow;
+    return PIECE_COLORS.green;
+  }
+
+  function isRed(r, c) {
+    return inactivity[r][c] >= 6;
   }
 
   /* ─────────────────────────────────────────────────────
@@ -251,7 +249,7 @@
         cell.className = 'cell ' + ((r + c) % 2 === 0 ? 'light' : 'dark');
         cell.dataset.r = r;
         cell.dataset.c = c;
-        cell.appendChild(makePieceEl(board[r][c]));
+        cell.appendChild(makePieceEl(board[r][c], getPieceColor(r, c)));
         cell.addEventListener('click', onCellClick);
         grid.appendChild(cell);
       }
@@ -259,11 +257,11 @@
     buildLegend();
   }
 
-  function makePieceEl(type) {
+  function makePieceEl(type, color) {
     const span = document.createElement('span');
     span.className = 'piece';
     span.textContent = SYMBOL[type];
-    span.style.color = COLOR[type];
+    span.style.color = color;
     return span;
   }
 
@@ -273,10 +271,18 @@
 
   function updateCell(r, c) {
     const el = cellEl(r, c);
-    // Replace piece child
     const old = el.querySelector('.piece');
     if (old) old.remove();
-    el.appendChild(makePieceEl(board[r][c]));
+    el.appendChild(makePieceEl(board[r][c], getPieceColor(r, c)));
+  }
+
+  function refreshAllColors() {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        const piece = cellEl(r, c).querySelector('.piece');
+        if (piece) piece.style.color = getPieceColor(r, c);
+      }
+    }
   }
 
   function buildLegend() {
@@ -286,10 +292,18 @@
       const div = document.createElement('div');
       div.className = 'legend-item';
       div.innerHTML =
-        `<span class="legend-icon" style="color:${COLOR[t]};filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.5))">${SYMBOL[t]}</span>` +
+        `<span class="legend-icon" style="color:${PIECE_COLORS.green};font-weight:bold;filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.5))">${SYMBOL[t]}</span>` +
         `<span>${LABEL[t]}</span>`;
       leg.appendChild(div);
     });
+    // Color guide row
+    const guide = document.createElement('div');
+    guide.style.cssText = 'width:100%;text-align:center;font-size:11px;color:#aaa;margin-top:4px;';
+    guide.innerHTML =
+      `<span style="color:${PIECE_COLORS.green};font-weight:bold">Green</span>: active &nbsp;|&nbsp; ` +
+      `<span style="color:${PIECE_COLORS.yellow};font-weight:bold">Yellow</span>: 3 turns idle &nbsp;|&nbsp; ` +
+      `<span style="color:${PIECE_COLORS.red};font-weight:bold">Red</span>: 6+ turns idle (stuck)`;
+    leg.appendChild(guide);
   }
 
   /* ─────────────────────────────────────────────────────
@@ -303,13 +317,11 @@
       if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) result.push([nr, nc]);
     };
 
+    // Sliding across the full grid in a direction (no blocking by pieces)
     const slide = (dr, dc) => {
       let nr = r + dr, nc = c + dc;
       while (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
         result.push([nr, nc]);
-        // Sliding pieces are blocked by the first piece they encounter
-        // (they can move TO that square but no further)
-        if (board[nr][nc]) break;
         nr += dr; nc += dc;
       }
     };
@@ -330,15 +342,15 @@
         .forEach(([dr,dc]) => add(r+dr, c+dc));
 
     } else if (type === 'bishop') {
-      // Diagonal sliding
+      // Full diagonal sliding across the grid
       [[1,1],[1,-1],[-1,1],[-1,-1]].forEach(([dr,dc]) => slide(dr,dc));
 
     } else if (type === 'rook') {
-      // Cardinal sliding
+      // Full straight-line sliding across the grid
       [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dr,dc]) => slide(dr,dc));
 
     } else if (type === 'queen') {
-      // All 8 directions sliding
+      // Full sliding in all 8 directions
       for (let dr = -1; dr <= 1; dr++)
         for (let dc = -1; dc <= 1; dc++)
           if (dr || dc) slide(dr,dc);
@@ -348,19 +360,23 @@
   }
 
   /* ─────────────────────────────────────────────────────
-     Highlight helpers
+     Selection helpers
   ───────────────────────────────────────────────────── */
-  function applyHighlights() {
-    clearHighlights();
+  function applySelection() {
     if (!selected) return;
-    cellEl(selected.r, selected.c).classList.add('selected');
-    validMoves.forEach(([r,c]) => cellEl(r,c).classList.add('valid-move'));
+    const el = cellEl(selected.r, selected.c);
+    el.classList.add('selected');
+    const piece = el.querySelector('.piece');
+    if (piece) piece.style.color = PIECE_COLORS.blue;
   }
 
-  function clearHighlights() {
-    document.querySelectorAll('.cell.selected, .cell.valid-move').forEach(el => {
-      el.classList.remove('selected', 'valid-move');
-    });
+  function clearSelection() {
+    if (selected) {
+      const el = cellEl(selected.r, selected.c);
+      el.classList.remove('selected');
+      const piece = el.querySelector('.piece');
+      if (piece) piece.style.color = getPieceColor(selected.r, selected.c);
+    }
   }
 
   /* ─────────────────────────────────────────────────────
@@ -417,11 +433,11 @@
 
       await sleep(340);
 
-      // Replace with new random pieces
+      // Replace with new random pieces (reset their inactivity)
       matches.forEach(([r,c]) => {
         board[r][c] = randomType();
+        inactivity[r][c] = 0;
         updateCell(r,c);
-        // Animate new pieces in
         const p = cellEl(r,c).querySelector('.piece');
         if (p) p.classList.add('dropping');
       });
@@ -442,26 +458,32 @@
      Input handling
   ───────────────────────────────────────────────────── */
   async function onCellClick(e) {
+    e.stopPropagation();
     if (busy) return;
     const el = e.currentTarget;
     const r = +el.dataset.r;
     const c = +el.dataset.c;
 
     if (!selected) {
-      // — First tap: select piece
+      // Red pieces cannot be moved
+      if (isRed(r, c)) {
+        setMsg('This piece is stuck and cannot be moved!');
+        return;
+      }
+      // First tap: select piece
       selected = { r, c };
       validMoves = getValidMoves(r, c);
-      applyHighlights();
-      setMsg(`${capFirst(board[r][c])} selected — tap a highlighted square to move`);
+      applySelection();
+      setMsg(`${capFirst(board[r][c])} selected — tap where to move it`);
       return;
     }
 
-    // — Already selected
+    // Already have a selected piece
     if (selected.r === r && selected.c === c) {
       // Tap same cell → deselect
+      clearSelection();
       selected = null;
       validMoves = [];
-      clearHighlights();
       setMsg('Tap a piece to select it');
       return;
     }
@@ -471,7 +493,7 @@
     if (isValid) {
       // Execute the move
       busy = true;
-      clearHighlights();
+      clearSelection();
 
       const sr = selected.r, sc = selected.c;
       selected = null;
@@ -482,6 +504,13 @@
       board[sr][sc] = board[r][c];
       board[r][c] = tmp;
 
+      // Increment inactivity for all pieces, then reset the two that moved
+      for (let row = 0; row < ROWS; row++)
+        for (let col = 0; col < COLS; col++)
+          inactivity[row][col]++;
+      inactivity[sr][sc] = 0;
+      inactivity[r][c] = 0;
+
       updateCell(sr, sc);
       updateCell(r, c);
 
@@ -491,15 +520,25 @@
 
       await resolveMatches();
 
+      // Refresh all piece colors to reflect updated inactivity
+      refreshAllColors();
+
       setMsg('Tap a piece to select it');
       busy = false;
 
     } else {
-      // Tap a different piece → select it instead
+      // Tap a different cell — switch selection (if not red)
+      clearSelection();
+      if (isRed(r, c)) {
+        selected = null;
+        validMoves = [];
+        setMsg('This piece is stuck and cannot be moved!');
+        return;
+      }
       selected = { r, c };
       validMoves = getValidMoves(r, c);
-      applyHighlights();
-      setMsg(`${capFirst(board[r][c])} selected — tap a highlighted square to move`);
+      applySelection();
+      setMsg(`${capFirst(board[r][c])} selected — tap where to move it`);
     }
   }
 
@@ -512,9 +551,21 @@
   }
 
   /* ─────────────────────────────────────────────────────
+     Tap outside grid → deselect
+  ───────────────────────────────────────────────────── */
+  document.addEventListener('click', function() {
+    if (busy || !selected) return;
+    clearSelection();
+    selected = null;
+    validMoves = [];
+    setMsg('Tap a piece to select it');
+  });
+
+  /* ─────────────────────────────────────────────────────
      Bootstrap
   ───────────────────────────────────────────────────── */
   initBoard();
+  initInactivity();
   buildGrid();
 </script>
 </body>
